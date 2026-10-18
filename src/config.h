@@ -27,5 +27,25 @@
 #define SESSION_LIMIT_MS      1800000UL // жорсткий ліміт сесії 30 хв (продовжується кнопкою)
 #define CLIENT_HB_VALID_MS    30000UL   // клієнт вважається живим, якщо був heartbeat за 30 с
 
+// ---------- Індикатор мережі (наявність зовнішніх +5 В) ----------
+#define MAINS_SENSE_ENABLED   1         // 1 — читати пін і показувати індикатор у вебморді; 0 — вимкнено повністю
+#define MAINS_SENSE_PIN       4         // GPIO4: вільний на N16R8 (не strapping, не flash/PSRAM, не USB, не RGB-LED)
+#define MAINS_ACTIVE_LEVEL    LOW       // рівень на піні, коли мережа є: LOW — оптопара PC817, HIGH — резисторний дільник
+#define MAINS_DEBOUNCE_MS     2000UL    // новий стан має триматися так довго, щоб його прийняти
+#define MAINS_LOG_SIZE        25        // скільки останніх змін стану мережі тримати в RAM і показувати
+
+// ---------- Синхронізація часу ----------
+// Основне джерело — time.now (https://time.now/developer, HTTPS, без ключа; потрібне посилання на Time.Now
+// у README/вебморді). При збоях час бере запасний NTP. 0 — лише NTP.
+#define TIMENOW_ENABLED       1
+#define TIMENOW_HOST          "time.now"
+#define TIMENOW_PATH          "/developer/api/time?timezone=Europe%2FKyiv"   // відповідь містить unixtime (UTC)
+#define TIMENOW_TIMEOUT_MS    8000UL
+#define TIMENOW_RESYNC_MS     21600000UL  // раз на 6 год
+#define TIMENOW_ONDEMAND_MIN_MS 30000UL   // позачергова синхронізація (подія мережі) — не частіше за цей інтервал
+#define TIMENOW_RETRY_MS      60000UL     // повтор після збою
+#define TIMENOW_RETRY_SLOW_MS 1800000UL   // після TIMENOW_FAILS_TO_NTP збоїв поспіль — раз на 30 хв
+#define TIMENOW_FAILS_TO_NTP  3           // стільки збоїв поспіль -> вмикаємо запасний NTP
+
 // ---------- Сторожовий таймер ----------
 #define BLE_TASK_STALL_MS     90000UL   // BLE-задача не відповідає -> перезавантаження
