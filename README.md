@@ -54,6 +54,59 @@ ESP32-S3 стоїть поруч із батареями, а з будь-яко�
 Підтримувані BMS: JK-B (прошивки 10.x — JK02_24S, 11.x+ — JK02_32S), JK-PB (JK02_32S).
 Старі JK-BD з протоколом JK04 не підтримуються.
 
+### Індикатор мережі (необов'язково)
+
+У шапці вебморди — товстий напис: зелений **«МЕРЕЖА Є»** або червоний **«МЕРЕЖІ НЕМАЄ»**
+(сірий, якщо зв'язок із ESP втрачено і стан невідомий). Сигнал — зовнішні **+5 В**, які є, поки є мережа
+(наприклад, від зарядки, увімкненої в розетку). Зміни стану пишуться в журнал.
+Вимкнути: `MAINS_SENSE_ENABLED 0` у `src/config.h` — тоді ні піна, ні напису.
+
+Нижче — випадаючий список **«Статистика мережі»**: останні 25 змін стану (час, «з'явилась» / «зникла», тривалість),
+підсумок — кількість відключень, сумарний час без мережі, відсоток наявності. Журнал живе **лише в RAM**:
+після перезапуску ESP історія не відновлюється, а перший запис — поточний стан мережі.
+
+**Час запису береться з сервісу часу.** У момент зміни стану запис отримує тимчасову мітку за годинником ESP
+(або без мітки, якщо годинник ще не виставлено), і одразу запитується позачергова синхронізація з Time.Now
+(не частіше ніж раз на 30 с). Щойно годинник виставлено, мітка перераховується від свіжого часу з урахуванням того,
+скільки секунд минуло від самої події, — тож вона відповідає моменту події, а не моменту відповіді сервісу.
+Якщо сервісу немає (типово: зникло світло, а з ним і роутер), запит чекає, і щойно з'явиться Wi-Fi, записи без
+точного часу уточнюються автоматично.
+
+Пін **GPIO4** (вільний на N16R8). Не використовувати: GPIO 0, 3, 45, 46 (strapping), 19/20 (USB),
+26–37 (flash/PSRAM), 43/44 (UART0), 38/48 (RGB-світлодіод на DevKitC-1). **Пін ESP32 не витримує 5 В** —
+напряму підключати не можна.
+
+**Варіант А (рекомендовано): оптопара, гальванічна розв'язка.** `MAINS_ACTIVE_LEVEL LOW` (за замовчуванням).
+
+```
+ +5 В (зовнішній) ──[ 1 кОм ]──► PC817 (1, анод)
+ GND (зовнішній) ─────────────── PC817 (2, катод)       опц.: 1N4148 антипаралельно світлодіоду
+ GPIO4 ───────────────────────── PC817 (4, колектор)    підтяг до 3V3 — внутрішній (INPUT_PULLUP)
+ GND ESP ─────────────────────── PC817 (3, емітер)
+```
+
+Потрібно: оптопара PC817 (або EL817 / 4N35) і резистор 1 кОм. Мережа є → оптопара відкрита → на піні LOW.
+Спільна земля не потрібна, ESP захищений від збоїв зовнішнього джерела.
+
+**Варіант Б (найпростіший): дільник напруги.** Потрібна спільна земля. У `config.h`: `MAINS_ACTIVE_LEVEL HIGH`.
+
+```
+ +5 В ──[ 10 кОм ]──┬── GPIO4          5 В → ≈3,0 В (поріг HIGH у S3 ≈ 2,5 В)
+                    └──[ 15 кОм ]── GND
+```
+
+Потрібно: два резистори, 10 кОм і 15 кОм (до 100 нФ між GPIO4 і GND — за бажанням, проти наведень на довгому дроті).
+
+### Синхронізація часу
+
+Час (для журналу подій і статистики мережі) ESP бере з **[Time.Now](https://time.now/developer)**: HTTPS-запит
+`https://time.now/developer/api/time?timezone=Europe%2FKyiv` без ключа, раз на 6 годин (поле `unixtime`).
+Якщо сервіс недоступний 3 спроби поспіль — вмикається запасний NTP (`pool.ntp.org`), а щойно Time.Now
+відповість знову, NTP зупиняється. Джерело й «вік» синхронізації видно в «Діагностиці». `TIMENOW_ENABLED 0` — лише NTP.
+
+Сертифікат сервера не перевіряється: для цього потрібен правильний час, а ми його саме й запитуємо.
+Через це не слід використовувати цей канал для чогось, окрім часу.
+
 ### Перше налаштування
 
 1. ESP піднімає Wi-Fi **JKBMS-Setup** (пароль `jkbms1234`). Підключіться — відкриється сторінка
@@ -88,6 +141,16 @@ ESP32-S3 стоїть поруч із батареями, а з будь-яко�
 | `CONNECT_TIMEOUT_MS` | 10 с | Таймаут BLE-з'єднання |
 | `HOSTNAME` | `jkbms` | Ім'я в mDNS |
 | `TZ_INFO` | Київ | Часовий пояс журналу |
+| `MAINS_SENSE_ENABLED` | 1 | Індикатор мережі: 1 — увімкнено, 0 — вимкнено повністю |
+| `MAINS_SENSE_PIN` | GPIO4 | Пін входу сигналу «мережа є» |
+| `MAINS_ACTIVE_LEVEL` | `LOW` | Рівень на піні, коли мережа є (`LOW` — оптопара, `HIGH` — дільник) |
+| `MAINS_DEBOUNCE_MS` | 2 с | Скільки має триматися новий стан, щоб його прийняти |
+| `MAINS_LOG_SIZE` | 25 | Скільки останніх змін стану мережі тримати в RAM і показувати |
+| `TIMENOW_ENABLED` | 1 | Синхронізація часу з Time.Now (0 — лише NTP) |
+| `TIMENOW_PATH` | `/developer/api/time?timezone=Europe%2FKyiv` | Запит часу (важливе лише поле `unixtime`, UTC) |
+| `TIMENOW_RESYNC_MS` | 6 год | Як часто пересинхронізувати час |
+| `TIMENOW_ONDEMAND_MIN_MS` | 30 с | Мін. інтервал між позачерговими синхронізаціями (подія мережі) |
+| `TIMENOW_FAILS_TO_NTP` | 3 | Скільки збоїв поспіль до вмикання запасного NTP |
 
 ## Структура проєкту
 
@@ -98,6 +161,8 @@ src/
   jk_protocol.*     протокол JK: кадри, CRC, розбір (без Arduino)
   settings.*        збереження налаштувань у NVS
   event_log.*       журнал подій
+  mains_log.*       журнал змін стану мережі (25 записів, лише RAM)
+  time_sync.*       синхронізація часу: Time.Now, запасний NTP
   web_ui.h          вебінтерфейс
   config.h          константи
 test/
@@ -121,6 +186,7 @@ test/
 ## Подяки
 
 Опис протоколу JK по BLE — за реалізацією [syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms).
+Точний час — безкоштовний сервіс [Time.Now](https://time.now).
 
 ---
 
@@ -182,6 +248,58 @@ The device only **reads** data: it never switches anything and never changes BMS
 Supported BMS: JK-B (firmware 10.x — JK02_24S, 11.x+ — JK02_32S), JK-PB (JK02_32S).
 Old JK-BD units with the JK04 protocol are not supported.
 
+### Mains indicator (optional)
+
+The page header shows bold text: green **"MAINS OK"** or red **"NO MAINS"** (grey if the connection
+to the ESP is lost and the state is unknown). The signal is an external **+5 V** that is present while the
+mains is up (e.g. from a charger plugged into a wall socket). State changes are written to the event log.
+To disable it set `MAINS_SENSE_ENABLED 0` in `src/config.h` — then there is no pin and no text.
+
+Below is a collapsible **"Mains statistics"** list: the last 25 state changes (time, "restored" / "lost", duration)
+plus a summary — number of outages, total time without mains, availability percentage. The log lives **in RAM only**:
+after an ESP restart the history is not restored, and the first entry is the current mains state.
+
+**The record time comes from the time service.** When the state changes, the record gets a provisional timestamp from
+the ESP clock (or none if the clock is not set yet) and an immediate extra sync with Time.Now is requested (at most
+once per 30 s). As soon as the clock is set, the timestamp is recomputed from the fresh time, taking into account how many
+seconds have passed since the event itself — so it matches the moment of the event, not of the service reply.
+If the service is unreachable (typically: the power is out, and the router with it), the request waits, and once Wi-Fi
+is back the records without an exact time are refined automatically.
+
+Pin **GPIO4** (free on the N16R8). Avoid: GPIO 0, 3, 45, 46 (strapping), 19/20 (USB), 26–37 (flash/PSRAM),
+43/44 (UART0), 38/48 (RGB LED on the DevKitC-1). **ESP32 pins are not 5 V tolerant** — never connect 5 V directly.
+
+**Option A (recommended): optocoupler, galvanic isolation.** `MAINS_ACTIVE_LEVEL LOW` (default).
+
+```
+ +5 V (external) ──[ 1 kΩ ]──► PC817 (1, anode)
+ GND (external) ─────────────── PC817 (2, cathode)      optional: 1N4148 anti-parallel to the LED
+ GPIO4 ──────────────────────── PC817 (4, collector)    pull-up to 3V3 is internal (INPUT_PULLUP)
+ ESP GND ────────────────────── PC817 (3, emitter)
+```
+
+Parts: a PC817 optocoupler (or EL817 / 4N35) and a 1 kΩ resistor. Mains up → optocoupler on → pin reads LOW.
+No common ground is needed, and the ESP is protected from faults of the external source.
+
+**Option B (simplest): voltage divider.** Needs a common ground. In `config.h` set `MAINS_ACTIVE_LEVEL HIGH`.
+
+```
+ +5 V ──[ 10 kΩ ]──┬── GPIO4          5 V → ≈3.0 V (HIGH threshold on the S3 ≈ 2.5 V)
+                   └──[ 15 kΩ ]── GND
+```
+
+Parts: two resistors, 10 kΩ and 15 kΩ (optionally up to 100 nF between GPIO4 and GND against pickup on a long wire).
+
+### Time synchronisation
+
+The time (for the event log and the mains statistics) comes from **[Time.Now](https://time.now/developer)**: an HTTPS request
+to `https://time.now/developer/api/time?timezone=Europe%2FKyiv`, no key, every 6 hours (the `unixtime` field).
+If the service is unreachable 3 times in a row, a fallback NTP (`pool.ntp.org`) is started, and it is stopped again as soon
+as Time.Now answers. The source and the "age" of the last sync are shown in "Diagnostics". `TIMENOW_ENABLED 0` — NTP only.
+
+The server certificate is not verified: that needs a correct clock, and the clock is exactly what we request.
+So do not reuse this channel for anything but the time.
+
 ### First-time setup
 
 1. The ESP starts a Wi-Fi network **JKBMS-Setup** (password `jkbms1234`). Connect to it — the setup
@@ -215,6 +333,16 @@ All timeouts and constants are in `src/config.h`:
 | `CONNECT_TIMEOUT_MS` | 10 s | BLE connection timeout |
 | `HOSTNAME` | `jkbms` | mDNS name |
 | `TZ_INFO` | Kyiv | Log time zone |
+| `MAINS_SENSE_ENABLED` | 1 | Mains indicator: 1 — on, 0 — fully disabled |
+| `MAINS_SENSE_PIN` | GPIO4 | Input pin for the "mains present" signal |
+| `MAINS_ACTIVE_LEVEL` | `LOW` | Pin level when mains is present (`LOW` — optocoupler, `HIGH` — divider) |
+| `MAINS_DEBOUNCE_MS` | 2 s | How long a new state must hold before it is accepted |
+| `MAINS_LOG_SIZE` | 25 | How many last mains state changes to keep in RAM and show |
+| `TIMENOW_ENABLED` | 1 | Time sync from Time.Now (0 — NTP only) |
+| `TIMENOW_PATH` | `/developer/api/time?timezone=Europe%2FKyiv` | Time request (only the `unixtime` field, UTC, matters) |
+| `TIMENOW_RESYNC_MS` | 6 h | How often to resync the clock |
+| `TIMENOW_ONDEMAND_MIN_MS` | 30 s | Minimum interval between on-demand syncs (mains event) |
+| `TIMENOW_FAILS_TO_NTP` | 3 | Consecutive failures before the fallback NTP starts |
 
 ## Project structure
 
@@ -225,6 +353,8 @@ src/
   jk_protocol.*     JK protocol: frames, CRC, parsing (no Arduino)
   settings.*        settings storage in NVS
   event_log.*       event log
+  mains_log.*       mains state-change log (25 entries, RAM only)
+  time_sync.*       time sync: Time.Now, fallback NTP
   web_ui.h          web interface
   config.h          constants
 test/
@@ -248,3 +378,4 @@ voltages, current, SOC, temperatures, switches, alarms, CRC and protocol detecti
 ## Acknowledgements
 
 The description of the JK BLE protocol is based on the [syssi/esphome-jk-bms](https://github.com/syssi/esphome-jk-bms) implementation.
+Accurate time comes from the free [Time.Now](https://time.now) service.

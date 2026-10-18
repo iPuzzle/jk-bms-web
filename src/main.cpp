@@ -18,6 +18,8 @@
 #include "config.h"
 #include "event_log.h"
 #include "settings.h"
+#include "time_sync.h"
+#include "mains_log.h"
 #include "ble_manager.h"
 #include "web_ui.h"
 
@@ -38,6 +40,9 @@ static volatile uint32_t sessionStartMs = 0;
 static bool wasLinked = false;
 static uint32_t restartAtMs = 0;
 static uint32_t lastBroadcastLogId = 0;
+#if MAINS_SENSE_ENABLED
+static uint32_t lastBroadcastMainsVer = 0;   // версія журналу мережі, яку вже розіслано
+#endif
 
 // ---------- Мережа ----------
 static bool apActive = false;
@@ -62,6 +67,41 @@ static const char *resetReasonStr() {
 
 // Число з фіксованою кількістю знаків (без хвостів на кшталт 3.2999999)
 static inline auto fx(float v, int digits) { return serialized(String(v, digits)); }
+
+// ---------- Індикатор мережі ----------
+#if MAINS_SENSE_ENABLED
+static bool mainsOn = false;   // стабільний (після антидребезгу) стан; пише лише loop()
+
+static bool mainsRaw() { return digitalRead(MAINS_SENSE_PIN) == MAINS_ACTIVE_LEVEL; }
+
+static void setupMains() {
+    // Для оптопари (активний LOW) потрібен підтяг до 3V3; з дільником він не потрібен.
+    pinMode(MAINS_SENSE_PIN, MAINS_ACTIVE_LEVEL == LOW ? INPUT_PULLUP : INPUT);
+    delay(20);   // дати піну встановитися (на випадок фільтрувального конденсатора)
+    mainsOn = mainsRaw();
+    LOGI("Мережа (GPIO%d): %s", MAINS_SENSE_PIN, mainsOn ? "є" : "немає");
+    mainslog::begin(mainsOn);
+}
+
+static void loopMains() {
+    static uint32_t diffSince = 0;   // з якого моменту сирий стан відрізняється від прийнятого
+    mainslog::tick();
+    const bool raw = mainsRaw();
+    if (raw == mainsOn) {
+        diffSince = 0;
+        return;
+    }
+    const uint32_t now = millis();
+    if (!diffSince) diffSince = now ? now : 1;
+    if (now - diffSince < MAINS_DEBOUNCE_MS) return;
+    mainsOn = raw;
+    const uint32_t eventMs = diffSince;   // реальний момент зміни сигналу, а не кінець антидребезгу
+    diffSince = 0;
+    mainslog::record(mainsOn, eventMs);
+    if (mainsOn) LOGI("Мережа з'явилась");
+    else LOGW("Мережа зникла");
+}
+#endif
 
 static void touchActivity() { lastActivityMs = millis(); }
 
@@ -91,6 +131,15 @@ static void buildState(JsonDocument &doc, bool fullLog, uint32_t logAfter) {
     doc["t"] = "state";
     doc["st"] = bleStateKey(s.state);
     doc["msg"] = s.message;
+#if MAINS_SENSE_ENABLED
+    doc["mains"] = mainsOn;
+    doc["tm"] = timeValid() ? (uint32_t)time(nullptr) : 0;   // «зараз» за годинником ESP — для тривалості поточного стану
+    // Журнал змін шлемо лише новим клієнтам і коли він змінився
+    if (fullLog || mainslog::version() != lastBroadcastMainsVer) {
+        mainslog::toJson(doc["mh"].to<JsonArray>());
+        if (!fullLog) lastBroadcastMainsVer = mainslog::version();
+    }
+#endif
 
     if (!s.mac.empty()) {
         JsonObject tg = doc["target"].to<JsonObject>();
@@ -186,6 +235,8 @@ static void buildState(JsonDocument &doc, bool fullLog, uint32_t logAfter) {
     dg["clients"] = ws.count();
     dg["active"] = activeClients();
     dg["defPass"] = settings::isDefaultPass();
+    dg["tsrc"] = timesync::source();
+    dg["tage"] = timesync::lastSyncAgeS();
 
     JsonObject al = doc["aliases"].to<JsonObject>();
     settings::aliasesToJson(al);
@@ -413,7 +464,7 @@ static void stopAp() {
 static void startNetServices() {
     if (netServicesStarted) return;
     netServicesStarted = true;
-    configTzTime(TZ_INFO, NTP_SERVER);
+    timesync::begin();   // часовий пояс + time.now (запасний NTP)
     ArduinoOTA.setHostname(HOSTNAME);
     ArduinoOTA.setPassword(settings::webPass().c_str());
     ArduinoOTA.onStart([]() { Ble.requestDisconnect("Оновлення прошивки (OTA)"); });
@@ -511,6 +562,9 @@ void setup() {
     delay(300);
     LOGI("JK-BMS Web %s, причина старту: %s", FW_VERSION, resetReasonStr());
 
+#if MAINS_SENSE_ENABLED
+    setupMains();
+#endif
     settings::begin();
     setupWifi();
     setupHttp();
@@ -522,6 +576,9 @@ void loop() {
     static uint32_t lastBroadcast = 0, lastCleanup = 0;
     const uint32_t now = millis();
 
+#if MAINS_SENSE_ENABLED
+    loopMains();
+#endif
     loopWifi();
     if (netServicesStarted) ArduinoOTA.handle();
     loopSession();

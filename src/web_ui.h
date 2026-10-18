@@ -8,7 +8,7 @@ static const char INDEX_HTML[] = R"HTML_RAW(<!doctype html>
 <style>
 :root{--bg:#0f1216;--card:#171b21;--line:#262c35;--txt:#e6e9ee;--mut:#8a93a1;--acc:#4ea1ff;--ok:#38c172;--warn:#f0b429;--bad:#ef5350;--chg:#38c172;--dsg:#f08c3a}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
+header{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:12px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
 header h1{font-size:17px;margin:0;font-weight:600}header .sp{flex:1}
 main{max-width:980px;margin:0 auto;padding:16px;display:grid;gap:14px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
@@ -39,9 +39,10 @@ details summary{cursor:pointer;color:var(--mut);font-size:13px;text-transform:up
 .log{font-family:ui-monospace,Menlo,monospace;font-size:12px;max-height:260px;overflow:auto;background:#0b0e12;border-radius:6px;padding:8px;margin-top:8px}
 .log div{white-space:pre-wrap}.log .l1{color:var(--warn)}.log .l2{color:var(--bad)}
 .hidden{display:none!important}.big{font-size:18px;font-weight:600}
-@media(max-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}.hide-m{display:none}}
+.mains{font-size:17px;font-weight:800;letter-spacing:.04em;white-space:nowrap}.mains.on{color:var(--ok)}.mains.off{color:var(--bad)}.mains.stale{color:var(--mut)}
+@media(max-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}.hide-m{display:none}.mains{font-size:15px}}
 </style></head><body>
-<header><h1>JK-BMS Web</h1><span id="wsPill" class="pill">…</span><span class="sp"></span><span id="hdrInfo" class="mut sm hide-m"></span><select id="lang" class="sm" onchange="setLang(this.value)" title="Language"><option value="uk">UK</option><option value="en">EN</option></select></header>
+<header><h1>JK-BMS Web</h1><span id="wsPill" class="pill">…</span><span id="mains" class="mains hidden"></span><span class="sp"></span><span id="hdrInfo" class="mut sm hide-m"></span><select id="lang" class="sm" onchange="setLang(this.value)" title="Language"><option value="uk">UK</option><option value="en">EN</option></select></header>
 <main>
 <div id="bnPass" class="banner warn" data-i="passBn">Використовується пароль за замовчуванням. Змініть його в розділі «Налаштування».</div>
 <div id="bnSess" class="banner warn"><span id="bnSessTxt"></span><span class="sp" style="flex:1"></span><button onclick="send({cmd:'extend'})" data-i="extend">Продовжити</button></div>
@@ -108,6 +109,11 @@ details summary{cursor:pointer;color:var(--mut);font-size:13px;text-transform:up
   <div class="row sm" style="margin-top:10px"><span class="mut" data-i="manual">Вручну:</span><input id="manMac" placeholder="C8:47:80:XX:XX:XX" size="18"><button onclick="connectTo(manMac.value)" data-i="connect">Підключити</button></div>
 </section>
 
+<details class="card hidden" id="cMains"><summary><span data-i="sMains">Статистика мережі</span> (<span id="mhN">0</span>)</summary>
+  <div class="sm mut" id="mhSum" style="margin-top:10px"></div>
+  <table style="margin-top:6px"><thead><tr><th data-i="thWhen">Час</th><th data-i="thState">Стан</th><th data-i="thDur">Тривалість</th></tr></thead><tbody id="mhBody"></tbody></table>
+</details>
+
 <details class="card"><summary data-i="sDiag">Діагностика і журнал</summary>
   <div class="kv" id="diagKv"></div>
   <div class="log" id="log"></div>
@@ -125,6 +131,7 @@ details summary{cursor:pointer;color:var(--mut);font-size:13px;text-transform:up
   </div>
 </details>
 </main>
+<footer class="mut sm" style="text-align:center;padding:0 16px 20px"><span data-i="lTimeBy">Синхронізація часу:</span> <a href="https://time.now" target="_blank" rel="noopener" style="color:var(--acc)">Time.Now</a></footer>
 <script>
 const $=id=>document.getElementById(id);
 let ws,S={},retry=0,lastLogId=0,hbTimer,wsOn=false;
@@ -145,7 +152,11 @@ sDiag:['Діагностика і журнал','Diagnostics and log'],sSet:['Н
 change:['Змінити','Change'],phWifiPass:['пароль','password'],save:['Зберегти','Save'],lFw:['Прошивка','Firmware'],update:['Оновити','Update'],lDevice:['Пристрій','Device'],reboot:['Перезапустити','Restart'],
 pwOk:['Пароль змінено. Пристрій перезапускається, увійдіть з новим паролем.','Password changed. The device is restarting, sign in with the new password.'],
 wifiOk:['Wi-Fi збережено, перезапуск…','Wi-Fi saved, restarting…'],rebootQ:['Перезапустити ESP32?','Restart the ESP32?'],rebooting:['Перезапуск…','Restarting…'],
-online:['Онлайн','Online'],offline:['Немає зв\'язку','No connection'],
+online:['Онлайн','Online'],offline:['Немає зв\'язку','No connection'],mainsOn:['МЕРЕЖА Є','MAINS OK'],mainsOff:['МЕРЕЖІ НЕМАЄ','NO MAINS'],mainsStale:['Немає зв\'язку з пристроєм — стан невідомий','No connection to the device — state unknown'],
+sMains:['Статистика мережі','Mains statistics'],thWhen:['Час','Time'],thState:['Стан','State'],thDur:['Тривалість','Duration'],
+mhOn:['Мережа з\'явилась','Mains restored'],mhOff:['Мережа зникла','Mains lost'],mhNow:['триває','ongoing'],
+mhSum:['Відключень: {0} · без мережі: {1} · наявність: {2}%','Outages: {0} · without mains: {1} · availability: {2}%'],
+dTime:['Синхронізація часу','Time sync'],lTimeBy:['Синхронізація часу:','Time sync by'],tNone:['не синхронізовано','not synced'],agoT:['{0} тому','{0} ago'],
 sIdle:['Не підключено','Not connected'],sScanning:['Сканування','Scanning'],sConnecting:['Підключення','Connecting'],sDiscovering:['Пошук сервісу','Finding service'],
 sWaitinfo:['Запит інформації','Requesting info'],sStreaming:['Підключено','Connected'],sError:['Помилка','Error'],
 stepConn:['З\'єднання','Link'],stepSvc:['Сервіс FFE0/FFE1','Service FFE0/FFE1'],stepInfo:['Device info','Device info'],stepData:['Дані','Data'],
@@ -205,12 +216,35 @@ function setLang(l){lang=l;try{localStorage.setItem('lang',l)}catch(x){}applyLan
 const ST={idle:['sIdle',''],scanning:['sScanning','acc'],connecting:['sConnecting','acc'],discovering:['sDiscovering','acc'],waitinfo:['sWaitinfo','acc'],streaming:['sStreaming','ok'],error:['sError','bad']};
 const STEPS=[['connecting','stepConn'],['discovering','stepSvc'],['waitinfo','stepInfo'],['streaming','stepData']];
 
-function setWsPill(){pill('wsPill',wsOn?t('online'):t('offline'),wsOn?'ok':'bad')}
+let MH=[];   // журнал змін мережі: [[ts,on],…], найновіші першими (ts=0 — час невідомий)
+function setWsPill(){pill('wsPill',wsOn?t('online'):t('offline'),wsOn?'ok':'bad');renderMains()}
+function fmtSpan(s){return s<60?s+' '+t('sec'):fmtUp(s,true)}
+function renderMhist(){
+  const has=S.mains!==undefined;
+  $('cMains').classList.toggle('hidden',!has);
+  if(!has)return;
+  const tm=S.tm||0;let total=0,off=0,outs=0;
+  $('mhBody').innerHTML=MH.map((e,i)=>{
+    const ts=e[0],on=e[1],end=i?MH[i-1][0]:tm,dur=ts&&end&&end>=ts?end-ts:-1;
+    if(dur>=0){total+=dur;if(!on)off+=dur}
+    if(!on)outs++;
+    return `<tr><td>${ts?new Date(ts*1000).toLocaleString(lang==='uk'?'uk-UA':'en-GB'):'—'}</td><td><b style="color:var(--${on?'ok':'bad'})">${t(on?'mhOn':'mhOff')}</b></td><td>${dur>=0?fmtSpan(dur)+(i?'':' · '+t('mhNow')):'—'}</td></tr>`}).join('');
+  $('mhN').textContent=MH.length;
+  $('mhSum').textContent=total>0?t('mhSum',outs,fmtSpan(off),Math.floor((total-off)*1000/total)/10):'';
+}
+// Індикатор мережі (зовнішні +5 В). Поле S.mains є лише якщо MAINS_SENSE_ENABLED у прошивці.
+function renderMains(){
+  const e=$('mains'),m=S.mains;
+  e.className='mains'+(m===undefined?' hidden':!wsOn?' stale':m?' on':' off');
+  if(m===undefined)return;
+  e.textContent=t(m?'mainsOn':'mainsOff');
+  e.title=wsOn?'':t('mainsStale');
+}
 function connectWs(){
   ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws');
   ws.onopen=()=>{retry=0;wsOn=true;setWsPill();hb()};
   ws.onclose=()=>{wsOn=false;setWsPill();setTimeout(connectWs,Math.min(10000,1000*++retry))};
-  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.t==='state'){S=m;render()}}catch(x){console.error(x)}};
+  ws.onmessage=e=>{try{const m=JSON.parse(e.data);if(m.t==='state'){S=m;if(m.mh)MH=m.mh;render()}}catch(x){console.error(x)}};
 }
 function send(o){if(ws&&ws.readyState===1)ws.send(JSON.stringify(o))}
 function hb(){send({cmd:'hb',vis:document.visibilityState==='visible'})}
@@ -240,6 +274,7 @@ function render(){
   const d=S.diag||{};
   $('hdrInfo').textContent=(d.ip||'')+(d.wifiRssi?' · Wi-Fi '+d.wifiRssi+' '+t('dbm'):'');
   $('bnPass').classList.toggle('show',!!d.defPass);
+  renderMains();renderMhist();
 
   // --- Підключення ---
   const tg=S.target,isL=linked(st);
@@ -302,7 +337,7 @@ function render(){
   renderDevices();
 
   // --- Діагностика ---
-  $('diagKv').innerHTML=[[t('dFw'),d.fw],[t('dUp'),fmtUp(d.up||0)],['Heap',Math.round(d.heap/1024)+' '+t('kb')+' ('+t('heapMin')+' '+Math.round(d.heapMin/1024)+')'],['PSRAM',Math.round(d.psram/1024)+' '+t('kb')],[t('dReset'),srv(d.reset)],['IP',d.ip],[t('dClients'),d.clients+' ('+t('dActive')+' '+d.active+')'],[t('dCrc'),tg?tg.crc:0]].map(x=>`<div><span class="mut">${x[0]}</span><b>${esc(x[1])}</b></div>`).join('');
+  $('diagKv').innerHTML=[[t('dFw'),d.fw],[t('dUp'),fmtUp(d.up||0)],['Heap',Math.round(d.heap/1024)+' '+t('kb')+' ('+t('heapMin')+' '+Math.round(d.heapMin/1024)+')'],['PSRAM',Math.round(d.psram/1024)+' '+t('kb')],[t('dReset'),srv(d.reset)],[t('dTime'),(d.tsrc==='timenow'?'time.now':d.tsrc==='ntp'?'NTP':t('tNone'))+(d.tage>=0?' · '+t('agoT',fmtUp(d.tage,true)):'')],['IP',d.ip],[t('dClients'),d.clients+' ('+t('dActive')+' '+d.active+')'],[t('dCrc'),tg?tg.crc:0]].map(x=>`<div><span class="mut">${x[0]}</span><b>${esc(x[1])}</b></div>`).join('');
   const lg=$('log'),atBottom=lg.scrollTop+lg.clientHeight>=lg.scrollHeight-5;
   for(const e of S.log||[]){
     if(e.id<=lastLogId)continue;lastLogId=e.id;
